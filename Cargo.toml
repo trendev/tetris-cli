@@ -1,0 +1,16 @@
+[package]
+name = "tetris-cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+crossterm = "0.25"
+rand = "0.8"
+
+[lib]
+name = "tetris_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tetris-cli"
+path = "src/main.rs"
