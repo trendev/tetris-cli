@@ -88,7 +88,7 @@ fn main() -> crossterm::Result<()> {
         for y in 0..BOARD_HEIGHT {
             for x in 0..BOARD_WIDTH {
                 if let Some(color) = game.board[y][x] {
-                    let block = "█".with(color);
+                    let block = "#".with(color);
                     stdout.queue(PrintStyledContent(block))?;
                 } else {
                     stdout.queue(PrintStyledContent("·".grey()))?;
@@ -103,7 +103,7 @@ fn main() -> crossterm::Result<()> {
                 if px >= 0 && px < BOARD_WIDTH as i32 && py >= 0 && py < BOARD_HEIGHT as i32 {
                     stdout
                         .queue(MoveTo(px as u16, py as u16))?
-                        .queue(PrintStyledContent("█".with(game.current_piece.color())))?;
+                        .queue(PrintStyledContent("#".with(game.current_piece.color())))?;
                 }
             }
         }
