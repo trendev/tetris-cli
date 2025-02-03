@@ -22,6 +22,12 @@ fn main() -> crossterm::Result<()> {
 
     let mut game = Game::new();
 
+    // Clear the entire screen (like Ctrl+L):
+    stdout.execute(Clear(ClearType::All))?;
+
+    // Optionally move the cursor to the top-left position:
+    stdout.execute(MoveTo(0, 0))?;
+
     // Main loop
     'game_loop: loop {
         // 1) Input
