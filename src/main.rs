@@ -5,7 +5,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
     ExecutableCommand, QueueableCommand,
 };
-use std::io::{stdout, Write};
+use std::io::{stdout, Write, Result};
 use std::time::Duration;
 
 mod game;
@@ -13,7 +13,7 @@ mod shapes; // bring in shapes.rs // bring in game.rs
 
 use game::{Game, BOARD_HEIGHT, BOARD_WIDTH};
 
-fn main() -> crossterm::Result<()> {
+fn main() -> Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = stdout();

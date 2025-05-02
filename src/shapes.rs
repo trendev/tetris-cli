@@ -1,5 +1,4 @@
 use rand::seq::SliceRandom;
-use rand::thread_rng;
 
 /// We'll define a small color enum or store just a u8 ID.
 #[derive(Copy, Clone, Debug)]
@@ -127,7 +126,7 @@ pub const SHAPES: [TetrominoShape; 7] = [
 /// 7-bag generator that just returns shape indices 0..6 in random order (runtime).
 pub fn generate_bag() -> Vec<usize> {
     let mut bag = [0,1,2,3,4,5,6];
-    let mut rng = thread_rng();
+    let mut rng = rand::rng();
     bag.shuffle(&mut rng);
     bag.to_vec()
 }

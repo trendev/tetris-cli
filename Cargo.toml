@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-crossterm = "0.25"
-rand = "0.8"
+crossterm = "0.29"
+rand = "0.9.1"
 
 [lib]
 name = "tetris_cli"
