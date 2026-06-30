@@ -16,7 +16,26 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy, llvm-tools-preview
+    - name: Install cargo-llvm-cov
+      uses: taiki-e/install-action@cargo-llvm-cov
+    - name: Format check
+      run: cargo fmt --all --check
+    - name: Clippy
+      run: cargo clippy --all-targets --all-features -- -D warnings
     - name: Build
       run: cargo build --verbose
     - name: Run tests
       run: cargo test --verbose
+    - name: Coverage
+      run: |
+        cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+        cargo llvm-cov report --summary-only
+    - name: Upload coverage report
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-lcov
+        path: lcov.info

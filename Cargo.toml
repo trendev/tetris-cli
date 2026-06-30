@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 crossterm = "0.29"
-rand = "0.9.1"
+rand = "0.10"
 
 [lib]
 name = "tetris_cli"
