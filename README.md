@@ -10,6 +10,8 @@ A simple command-line Tetris clone with classic features:
 
 ## How to Play
 
+The controls are also listed live in-game, in a panel below the score.
+
 - **Left / Right Arrows**: Move the falling piece left or right  
 - **Down Arrow**: Soft drop (speeds up piece descent)  
 - **Up Arrow**: Rotate the piece clockwise  

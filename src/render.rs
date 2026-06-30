@@ -10,6 +10,18 @@ use crossterm::{
 use crate::game::{Game, BOARD_HEIGHT, BOARD_WIDTH};
 use crate::shapes::SHAPES;
 
+/// Key bindings shown in-game so players know how to play without consulting the README.
+const CONTROLS: [&str; 8] = [
+    "Controls:",
+    "  \u{2190} \u{2192}  Move",
+    "  \u{2191}    Rotate CW",
+    "  Z    Rotate CCW",
+    "  \u{2193}    Soft drop",
+    "  Spc  Hard drop",
+    "  C    Hold",
+    "  Esc  Quit",
+];
+
 /// Draw the full game frame (board, active piece, hold, next queue and stats) to `out`.
 ///
 /// Writing to a generic [`Write`] keeps rendering decoupled from the terminal so it can be
@@ -76,9 +88,18 @@ pub fn render<W: Write>(out: &mut W, game: &Game) -> Result<()> {
             format!("Lines: {}", game.lines_cleared).stylize(),
         ))?;
 
+    // Controls legend (dimmed so it doesn't compete with the board).
+    for (i, line) in CONTROLS.iter().enumerate() {
+        out.queue(MoveTo(0, BOARD_HEIGHT as u16 + 8 + i as u16))?
+            .queue(PrintStyledContent(line.dark_grey()))?;
+    }
+
     if game.game_over {
-        out.queue(MoveTo(0, BOARD_HEIGHT as u16 + 8))?
-            .queue(PrintStyledContent("GAME OVER".red()))?;
+        out.queue(MoveTo(
+            0,
+            BOARD_HEIGHT as u16 + 8 + CONTROLS.len() as u16 + 1,
+        ))?
+        .queue(PrintStyledContent("GAME OVER".red()))?;
     }
 
     out.flush()?;
@@ -105,6 +126,8 @@ mod tests {
         assert!(out.contains("Score: 0"));
         assert!(out.contains("Level: 0"));
         assert!(out.contains("Lines: 0"));
+        assert!(out.contains("Controls:"));
+        assert!(out.contains("Hard drop"));
         assert!(!out.contains("GAME OVER"));
     }
 
