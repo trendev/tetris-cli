@@ -1,3 +1,10 @@
+//! The Tetris state machine: board, active piece, scoring/levels, and the
+//! lock cycle that ties them together.
+//!
+//! Coordinates throughout this module are `(x, y)` with the origin at the
+//! top-left, `x` growing right and `y` growing down. The board is stored
+//! row-major as `board[y][x]` (row first, then column) - easy to get backwards,
+//! so watch for that when indexing directly instead of via `positions()`.
 use crossterm::style::Color;
 use std::time::{Duration, Instant};
 
@@ -9,58 +16,90 @@ pub const BOARD_HEIGHT: usize = 20;
 /// Board cell: None if empty, Some(color) if occupied.
 pub type Board = [[Option<Color>; BOARD_WIDTH]; BOARD_HEIGHT];
 
-/// Holds piece orientation, position, and shape index.
+/// A falling (or held) piece: which shape it is, which of its 4 rotations is
+/// active, and its position on the board.
 #[derive(Clone)]
 pub struct Tetromino {
-    pub shape_idx: usize,   // index into SHAPES
-    pub orientation: usize, // 0..3
+    /// Index into [`SHAPES`] selecting which of the 7 tetrominoes this is.
+    pub shape_idx: usize,
+    /// Which of the shape's 4 precomputed rotations is currently active.
+    /// Rotating just changes this index (mod 4); see [`Tetromino::rotate_cw`].
+    pub orientation: usize,
+    /// Board-space x/y of this piece's local origin. Cell coordinates from
+    /// [`SHAPES`] are added to this to get absolute board positions.
     pub x: i32,
     pub y: i32,
 }
 
 impl Tetromino {
+    /// The 4 local `(x, y)` cell offsets for the current shape/orientation,
+    /// as laid out in [`crate::shapes`].
     pub fn cells(&self) -> &[[i32; 2]; 4] {
         &SHAPES[self.shape_idx].orientations[self.orientation]
     }
 
+    /// Absolute board positions occupied by this piece, i.e. each local cell
+    /// offset added to the piece's `(x, y)`.
     pub fn positions(&self) -> Vec<(i32, i32)> {
-        // Convert each [x,y] into a tuple
         self.cells()
             .iter()
             .map(|&xy| (self.x + xy[0], self.y + xy[1]))
             .collect()
     }
 
+    /// Rotate clockwise by stepping to the next precomputed orientation.
+    /// Shapes have no rotation math at runtime - each orientation's cell
+    /// layout is hardcoded in `shapes.rs`, so "rotating" is just indexing.
     pub fn rotate_cw(&mut self) {
         self.orientation = (self.orientation + 1) % 4;
     }
 
+    /// Rotate counter-clockwise. Adding 3 (rather than subtracting 1) avoids
+    /// underflow since `orientation` is unsigned.
     pub fn rotate_ccw(&mut self) {
         self.orientation = (self.orientation + 3) % 4;
     }
 
+    /// The display color for this piece's shape, looked up via its
+    /// `color_index` and converted to a [`Color`] for rendering.
     pub fn color(&self) -> Color {
         let idx = SHAPES[self.shape_idx].color_index;
         color_from_index(idx)
     }
 
+    /// Single-letter shape name (I, O, T, S, Z, J, L) shown in the UI for
+    /// the hold slot and next-piece queue.
     pub fn name(&self) -> char {
         SHAPES[self.shape_idx].name
     }
 }
 
-/// Main game state
+/// Main game state: the board, the piece currently falling, the hold slot,
+/// the 7-bag randomizer state, and scoring/timing.
 pub struct Game {
     pub board: Board,
     pub current_piece: Tetromino,
+    /// The piece tucked away via the hold action (`C` key), if any.
     pub hold_piece: Option<Tetromino>,
+    /// Whether holding is currently allowed. Disabled after a swap-hold so a
+    /// player can't hold back and forth indefinitely to stall a piece - it's
+    /// re-enabled the next time a piece locks and a new one spawns. See
+    /// [`Game::hold_current_piece`] for the asymmetry between the first hold
+    /// and subsequent swaps.
     pub can_hold: bool,
 
+    /// Shape indices for the bag currently being drawn from.
     pub bag: Vec<usize>,
+    /// The *next* full bag, pre-generated so a fresh 7-bag is always ready
+    /// the instant `bag` runs dry - see [`generate_bag`] for the shuffle.
     pub next_bag: Vec<usize>,
+    /// Look-ahead queue of upcoming shapes (kept topped up to 3) used both to
+    /// spawn the next piece and to render the "Next" preview.
     pub next_queue: Vec<usize>,
 
+    /// When the piece last fell one row under gravity.
     pub last_tick: Instant,
+    /// How long between automatic gravity drops; shrinks as the level rises.
     pub fall_interval: Duration,
 
     pub level: u32,
@@ -71,11 +110,15 @@ pub struct Game {
 
 impl Game {
     pub fn new() -> Self {
+        // Two bags are kept on hand: `bag` is drawn from for new pieces, and
+        // `next_bag` is generated immediately so `spawn_next_piece` can swap
+        // it in mid-queue-fill without ever blocking on a fresh shuffle.
         let mut bag = generate_bag();
         let mut next_bag = generate_bag();
         let mut next_queue = vec![];
 
-        // Pre-populate 3 upcoming
+        // Pre-populate the look-ahead to 3 pieces, refilling `bag` from
+        // `next_bag` if it runs out partway through.
         while next_queue.len() < 3 {
             if bag.is_empty() {
                 bag = next_bag;
@@ -84,11 +127,14 @@ impl Game {
             next_queue.push(bag.remove(0));
         }
 
-        // Spawn current piece
+        // Consume one piece from the queue to spawn the active piece, so
+        // `next_queue` ends up holding 2 (not 3) right after construction.
         let shape_idx = next_queue.remove(0);
         let current_piece = Tetromino {
             shape_idx,
             orientation: 0,
+            // Centered-ish spawn column; -2 accounts for shapes being defined
+            // within a 4-wide local grid (see `shapes.rs`).
             x: (BOARD_WIDTH / 2) as i32 - 2,
             y: 0,
         };
@@ -114,6 +160,8 @@ impl Game {
     }
 
     /// Return true if `piece`'s positions are all in-bounds and unoccupied.
+    /// This is the single source of truth for "can the piece be here?" -
+    /// movement, rotation, wallkicks, and spawning all funnel through it.
     pub fn is_valid_position(&self, piece: &Tetromino) -> bool {
         for &(px, py) in piece.positions().iter() {
             if px < 0 || px >= BOARD_WIDTH as i32 || py < 0 || py >= BOARD_HEIGHT as i32 {
@@ -126,6 +174,11 @@ impl Game {
         true
     }
 
+    /// Attempt to shift the current piece by `(dx, dy)`. Applies the move
+    /// speculatively, then rolls it back if that lands on an invalid
+    /// position (out of bounds or overlapping a locked cell). Returns
+    /// whether the move succeeded, which callers use to detect "can't go
+    /// any further" (e.g. soft drop locking the piece on failure).
     pub fn try_move(&mut self, dx: i32, dy: i32) -> bool {
         let old_x = self.current_piece.x;
         let old_y = self.current_piece.y;
@@ -140,6 +193,8 @@ impl Game {
         true
     }
 
+    /// Rotate clockwise, falling back to a wallkick and finally reverting if
+    /// the new orientation doesn't fit anywhere.
     pub fn try_rotate_cw(&mut self) {
         let old_orientation = self.current_piece.orientation;
         self.current_piece.rotate_cw();
@@ -149,6 +204,7 @@ impl Game {
         }
     }
 
+    /// Same as [`Game::try_rotate_cw`] but counter-clockwise.
     pub fn try_rotate_ccw(&mut self) {
         let old_orientation = self.current_piece.orientation;
         self.current_piece.rotate_ccw();
@@ -157,7 +213,12 @@ impl Game {
         }
     }
 
-    /// Very naive wallkick that tries shifting piece left/right/up a bit.
+    /// Very naive wallkick: try a handful of fixed offsets (left/right by 1
+    /// or 2, up by 1, and the diagonals) and keep the first one that makes
+    /// the post-rotation position valid. This is *not* the official SRS
+    /// kick-table system (which picks offsets per-shape and per-rotation) -
+    /// it's a small fixed list that's good enough to let rotations succeed
+    /// near walls/floor without implementing full SRS.
     fn do_wallkick(&mut self) -> bool {
         let offsets = [(1, 0), (-1, 0), (2, 0), (-2, 0), (0, -1), (1, -1), (-1, -1)];
         let (orig_x, orig_y) = (self.current_piece.x, self.current_piece.y);
@@ -173,7 +234,10 @@ impl Game {
         false
     }
 
-    /// Lock the current piece into the board (cells become Some(color))
+    /// Stamp the current piece's cells into the board as permanent, colored
+    /// cells. Called once the piece can no longer fall (see
+    /// [`Game::lock_and_advance`]); positions are already guaranteed valid at
+    /// this point, the bounds check here is just defensive.
     pub fn lock_piece(&mut self) {
         for &(px, py) in self.current_piece.positions().iter() {
             if px >= 0 && px < BOARD_WIDTH as i32 && py >= 0 && py < BOARD_HEIGHT as i32 {
@@ -187,6 +251,7 @@ impl Game {
     /// Rebuilds the board from the rows that are not full and pushes them to the bottom,
     /// which correctly compacts any number of cleared lines (including non-adjacent ones).
     pub fn clear_lines(&mut self) {
+        // Keep only rows with at least one empty cell; full rows are dropped.
         let kept: Vec<[Option<Color>; BOARD_WIDTH]> = self
             .board
             .iter()
@@ -199,25 +264,35 @@ impl Game {
             return;
         }
 
-        // Surviving rows fall to the bottom; empty rows fill the top.
+        // Surviving rows fall to the bottom; empty rows fill the top. Writing
+        // `kept` rows starting at index `lines_cleared_now` (rather than 0)
+        // is what makes everything above the gaps "fall" down by exactly the
+        // number of lines removed, regardless of whether those lines were
+        // adjacent.
         let mut board = [[None; BOARD_WIDTH]; BOARD_HEIGHT];
         for (i, row) in kept.into_iter().enumerate() {
             board[lines_cleared_now + i] = row;
         }
         self.board = board;
 
+        // Score using the level in effect *before* any level-up below, so
+        // e.g. clearing the 10th line still scores at the old (slower) level
+        // and only the level counter advances afterwards.
         self.score += self.line_clear_score(lines_cleared_now);
         self.lines_cleared += lines_cleared_now as u32;
 
-        // level up every 10 lines
+        // Level up every 10 total lines cleared, and speed up gravity to
+        // match - each level shaves 40ms off the fall interval, floored at
+        // 100ms so the game never becomes literally unplayable.
         if (self.lines_cleared / 10) > self.level {
             self.level = self.lines_cleared / 10;
-            // speed up
             let speed = 500_u64.saturating_sub(self.level as u64 * 40);
             self.fall_interval = Duration::from_millis(speed.max(100));
         }
     }
 
+    /// Classic Tetris scoring table (single/double/triple/tetris), scaled by
+    /// `level + 1` so clears are worth more at higher levels.
     fn line_clear_score(&self, lines: usize) -> u32 {
         let base = match lines {
             1 => 40,
@@ -229,7 +304,11 @@ impl Game {
         base * (self.level + 1)
     }
 
-    /// Spawn next piece from next_queue, refill queue as needed
+    /// Pull the next shape off `next_queue` to become the active piece,
+    /// topping the queue back up to 3 from the bag (refilling the bag from
+    /// `next_bag` if needed - see [`Game::new`] for why two bags exist).
+    /// Re-enables holding for the new piece, and ends the game if the new
+    /// piece can't even fit at its spawn position (board topped out).
     pub fn spawn_next_piece(&mut self) {
         while self.next_queue.len() < 3 {
             if self.bag.is_empty() {
@@ -253,7 +332,17 @@ impl Game {
         }
     }
 
-    /// Swap current piece with hold piece (if allowed)
+    /// Hold (`C` key): stash the current piece for later and bring back
+    /// whatever was previously held, or - on the very first hold - just
+    /// stash the current piece and spawn a fresh one from the queue.
+    ///
+    /// The two branches intentionally behave differently around `can_hold`:
+    /// the **swap** branch (`Some`) sets `can_hold = false` and leaves it
+    /// there, preventing the player from holding repeatedly to stall a
+    /// piece indefinitely. The **first hold** (`None`) branch instead calls
+    /// [`Game::spawn_next_piece`], which itself resets `can_hold = true` -
+    /// so the very first hold does *not* lock out a second hold right away;
+    /// the lockout only kicks in once a swap has actually happened.
     pub fn hold_current_piece(&mut self) {
         if !self.can_hold {
             return;
@@ -264,13 +353,15 @@ impl Game {
             Some(hp) => {
                 let old_shape_idx = self.current_piece.shape_idx;
                 let old_orientation = self.current_piece.orientation;
-                // move hold piece into current
+                // Move the held piece into play, respawning it at the
+                // standard spawn position (not wherever the current piece
+                // happened to be).
                 self.current_piece.shape_idx = hp.shape_idx;
                 self.current_piece.orientation = hp.orientation;
                 self.current_piece.x = (BOARD_WIDTH / 2) as i32 - 2;
                 self.current_piece.y = 0;
 
-                // store old in hold
+                // Stash what was falling into the hold slot.
                 hp.shape_idx = old_shape_idx;
                 hp.orientation = old_orientation;
             }
@@ -281,27 +372,35 @@ impl Game {
         }
     }
 
-    /// Lock the current piece, clear any completed lines, and spawn the next piece.
+    /// The lock cycle: stamp the piece into the board, clear any now-full
+    /// rows, then spawn the next piece. Both gravity (`soft_drop`/`update`)
+    /// and a manual hard drop funnel through this so the sequence is never
+    /// duplicated or reordered.
     pub fn lock_and_advance(&mut self) {
         self.lock_piece();
         self.clear_lines();
         self.spawn_next_piece();
     }
 
-    /// Move the piece down one row; if it can't fall, lock it and advance.
+    /// Move the piece down one row; if it can't fall any further, treat that
+    /// as a lock (this is also what gravity calls every tick).
     pub fn soft_drop(&mut self) {
         if !self.try_move(0, 1) {
             self.lock_and_advance();
         }
     }
 
-    /// Drop the piece as far as it can go, then lock it and advance.
+    /// Drop the piece straight down as far as it will go, then lock it
+    /// immediately - skipping the usual per-row gravity ticks.
     pub fn hard_drop(&mut self) {
         while self.try_move(0, 1) {}
         self.lock_and_advance();
     }
 
-    /// Gravity update: apply a soft drop once the fall interval has elapsed.
+    /// Called once per main-loop iteration. Applies exactly one soft drop's
+    /// worth of gravity once `fall_interval` has elapsed since the last
+    /// tick; otherwise a no-op. Resets the tick clock regardless of how long
+    /// the loop took, so timing tracks wall-clock time rather than frames.
     pub fn update(&mut self) {
         if self.last_tick.elapsed() >= self.fall_interval {
             self.last_tick = Instant::now();

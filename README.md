@@ -8,6 +8,50 @@ A simple command-line Tetris clone with classic features:
 - **Soft Drop** (Down arrow), **Hard Drop** (Space)  
 - **Scoring & Levels** (increasing speed)  
 
+## Getting Started
+
+### Prerequisites
+
+- A [Rust toolchain](https://www.rust-lang.org/tools/install) (stable, 2021 edition) — `cargo` and `rustc`.
+- An interactive terminal (TTY). The game enables raw mode, so it cannot run headless or in CI.
+
+### Build
+
+```bash
+cargo build            # debug build
+cargo build --release  # optimized build (binary in target/release/tetris-cli)
+```
+
+### Run
+
+```bash
+cargo run              # build and play
+./target/release/tetris-cli   # run a release binary directly
+```
+
+> **Note:** `cargo run` needs a real interactive terminal because it switches the
+> terminal into raw mode. It won't work when piped, redirected, or run in CI.
+
+### Test
+
+```bash
+cargo test                                    # run all unit + integration tests
+cargo test test_clear_tetris_and_non_adjacent  # run a single test by name
+```
+
+All game logic lives in the `tetris_cli` library, so tests run fully headless —
+no terminal required.
+
+### Lint, Format & Coverage
+
+These mirror the CI gate (`.github/workflows/main.yml`); run them before pushing:
+
+```bash
+cargo fmt --all --check                                     # verify formatting
+cargo clippy --all-targets --all-features -- -D warnings    # lint (warnings fail)
+cargo llvm-cov --summary-only                               # coverage (cargo install cargo-llvm-cov)
+```
+
 ## How to Play
 
 The controls are also listed live in-game, in a panel below the score.

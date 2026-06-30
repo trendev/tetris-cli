@@ -18,7 +18,10 @@ pub enum Action {
 
 /// Map a key press to an [`Action`], or `None` if the key is unbound.
 pub fn action_for_key(code: KeyCode, modifiers: KeyModifiers) -> Option<Action> {
-    // Ctrl+C quits regardless of which character key it is paired with.
+    // Ctrl+C must be checked *before* the plain-key match below: `c` without
+    // a modifier maps to Hold, and `KeyCode::Char('c')` is the same value
+    // whether or not Ctrl is held, so without this early return Ctrl+C would
+    // be swallowed as a Hold action instead of quitting.
     if modifiers.contains(KeyModifiers::CONTROL) && code == KeyCode::Char('c') {
         return Some(Action::Quit);
     }

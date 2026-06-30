@@ -102,6 +102,9 @@ pub fn render<W: Write>(out: &mut W, game: &Game) -> Result<()> {
     }
 
     if game.game_over {
+        // Row derived from `CONTROLS.len()` rather than a hardcoded number,
+        // so the banner automatically drops one row lower if a line is ever
+        // added to the legend above - don't replace this with a literal.
         out.queue(MoveTo(
             0,
             BOARD_HEIGHT as u16 + 8 + CONTROLS.len() as u16 + 1,
