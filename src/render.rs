@@ -10,6 +10,13 @@ use crossterm::{
 use crate::game::{Game, BOARD_HEIGHT, BOARD_WIDTH};
 use crate::shapes::SHAPES;
 
+/// A filled board cell. Two full-block chars wide so cells render square despite the
+/// terminal's ~1:2 (width:height) character aspect ratio.
+const BLOCK: &str = "\u{2588}\u{2588}";
+/// An empty board cell: a faint dot plus a space, keeping a light playfield grid while
+/// occupying the same two columns as a [`BLOCK`].
+const EMPTY: &str = "\u{00b7} ";
+
 /// Key bindings shown in-game so players know how to play without consulting the README.
 const CONTROLS: [&str; 8] = [
     "Controls:",
@@ -29,27 +36,27 @@ const CONTROLS: [&str; 8] = [
 pub fn render<W: Write>(out: &mut W, game: &Game) -> Result<()> {
     out.queue(MoveTo(0, 0))?.queue(Clear(ClearType::All))?;
 
-    // Draw the board.
+    // Draw the board. Each cell is two columns wide so minos render square.
     for row in game.board.iter() {
         for cell in row.iter() {
             match cell {
                 Some(color) => {
-                    out.queue(PrintStyledContent("●".with(*color)))?;
+                    out.queue(PrintStyledContent(BLOCK.with(*color)))?;
                 }
                 None => {
-                    out.queue(PrintStyledContent("·".grey()))?;
+                    out.queue(PrintStyledContent(EMPTY.dark_grey()))?;
                 }
             }
         }
         out.queue(PrintStyledContent("\r\n".stylize()))?;
     }
 
-    // Draw the active piece on top of the board.
+    // Draw the active piece on top of the board (cell x maps to screen column 2*x).
     if !game.game_over {
         for &(px, py) in game.current_piece.positions().iter() {
             if px >= 0 && px < BOARD_WIDTH as i32 && py >= 0 && py < BOARD_HEIGHT as i32 {
-                out.queue(MoveTo(px as u16, py as u16))?
-                    .queue(PrintStyledContent("●".with(game.current_piece.color())))?;
+                out.queue(MoveTo((px * 2) as u16, py as u16))?
+                    .queue(PrintStyledContent(BLOCK.with(game.current_piece.color())))?;
             }
         }
     }
@@ -129,6 +136,18 @@ mod tests {
         assert!(out.contains("Controls:"));
         assert!(out.contains("Hard drop"));
         assert!(!out.contains("GAME OVER"));
+        // A fresh game draws its active piece as a square block, over a dotted grid.
+        assert!(out.contains(BLOCK));
+        assert!(out.contains(EMPTY));
+    }
+
+    #[test]
+    fn renders_square_blocks_after_lock() {
+        let mut game = Game::new();
+        game.hard_drop();
+        let out = render_to_string(&game);
+        // Locked cells render as solid square blocks.
+        assert!(out.contains(BLOCK));
     }
 
     #[test]
